@@ -18,6 +18,10 @@ from redchain.scorer.llm_judge_scorer import LLMJudgeScorer
 from redchain.target.base_adapter import BaseTargetAdapter
 from redchain.target.http_adapter import HTTPTargetAdapter
 
+from redchain.reporter.trace_builder import TraceBuilder
+from redchain.reporter.json_reporter import JSONReporter
+
+
 console = Console()
 
 # Registry: maps strategy name string -> strategy class
@@ -176,38 +180,21 @@ class AttackOrchestrator:
                     break
             
 
-        # Build final report
-        duration = time.time() - start_time
-        status = (
-            "EXPLOITED" if exploit_found
-            else "PARTIAL" if any(t.score.confidence > 0.3 for t in self.history)
-            else "RESILIENT"
-        )
+        # Build final report using TraceBuilder
+        builder = TraceBuilder(self.config, start_time)
+        report = builder.build(self.history, all_owasp_findings)
 
-        exploit_evidence = None
+        # Save report to disk
+        reporter = JSONReporter()
+        report_path = reporter.save(report)
 
-        for turn in self.history:
-            if turn.score.is_exploit and turn.score.evidence:
-                exploit_evidence = turn.score.evidence
-                break
-
-        report = AuditReport(
-            session_id = self.config.session_id,
-            config = self.config,
-            status = status,
-            turns = self.history,
-            owasp_findings = all_owasp_findings,
-            exploit_evidence = exploit_evidence,
-            recommendations = self._generate_recommendations(all_owasp_findings),
-            duration_seconds = duration,
-        )
-
-        color = "red" if status == "EXPLOITED" else "yellow" if status == "PARTIAL" else "green"
+        color = "red" if report.status == "EXPLOITED" else "yellow" if report.status == "PARTIAL" else "green"
         console.print(Panel(
-            f"[bold {color}]Attack Complete: {status}[/bold {color}]\n"
+            f"[bold {color}]Attack Complete: {report.status}[/bold {color}]\n"
             f"Turns run:      {len(self.history)}\n"
-            f"Duration:       {duration:.1f}s\n"
-            f"OWASP findings: {all_owasp_findings or 'None'}",
+            f"Duration:       {report.duration_seconds:.1f}s\n"
+            f"OWASP findings: {report.owasp_findings or 'None'}\n"
+            f"Report saved:   {report_path}",
             border_style=color,
         ))
 
