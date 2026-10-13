@@ -51,10 +51,10 @@ class JSONReporter:
     
     def load(self, session_id: str) -> AuditReport:
         """
-        Load a previously saved AuditReport from disk by session ID.
+        Load a previously saved AuditReport from disk by session ID or filename.
 
         Args:
-            session_id: The session ID (first 8 chars used for filename).
+            session_id: The session ID (first 8 chars used for filename), prefix or full file name.
 
         Returns:
             The deserialized AuditReport.
@@ -63,15 +63,58 @@ class JSONReporter:
             FileNotFoundError if no report exists for this session ID.
         """
 
-        filename = f"attack_{session_id[:8]}.json"
+        clean_id = session_id.strip()
+
+        if clean_id.startswith("attack_"):
+            clean_id = clean_id[7:]
+            
+        if clean_id.endswith(".json"):
+            clean_id = clean_id[:-5]
+
+        filename = f"attack_{clean_id[:8]}.json"
         path = self.reports_dir / filename
 
         if not path.exists():
-            raise FileNotFoundError(
-                f"No report found for session '{session_id}' at {path}"
-            )
+            # Fallback: check if exact file matches directly
+            direct_path = self.reports_dir / session_id
+            if direct_path.exists():
+                path = direct_path
+            else:
+                raise FileNotFoundError(
+                    f"No report found for session '{session_id}' at {path}"
+                )
 
         with open(path, "r", encoding = "utf-8") as f:
             data = json.load(f)
 
         return AuditReport.model_validate(data)
+
+
+    def list_all(self) -> list[AuditReport]:
+        """
+        Load all saved AuditReports sorted by creation time (newest first).
+        """
+
+        if not self.reports_dir.exists():
+            return []
+        
+        reports: list[AuditReport] = []
+        
+        json_files = sorted(
+            self.reports_dir.glob("attack_*.json"),
+            key = lambda p: p.stat().st_mtime,
+            reverse = True,
+        )
+
+        for path in json_files:
+            try:
+                with open(path, "r", encoding = "utf-8") as f:
+                    data = json.load(f)
+                
+                reports.append(AuditReport.model_validate(data))
+            
+            except Exception:
+                continue
+
+                
+        return reports
